@@ -1,0 +1,7 @@
+dropin.cache
+*.pid
+*.log
+*.pyc
+MANIFEST
+dist/
+build/
