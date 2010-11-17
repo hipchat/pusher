@@ -13,6 +13,7 @@ class Options(usage.Options):
     optParameters = [
         ["apns-host", None, "gateway.push.apple.com:2195", "APNS host."],
         ["gearman-host", None, "localhost:4730", "Gearman server host."],
+        ["gearman-queue", None, "pusher", "Gearman queue name."],
         ["ssl-cert", None, None, "Path to SSL cert in .pem format."],
         ["ssl-key", None, None, "Path to SSL key in .pem format."]]
 
@@ -36,6 +37,7 @@ class PusherServiceMaker(object):
 
         return PusherService(options['apns-host'],
                              options['gearman-host'],
+                             options['gearman-queue'],
                              options['ssl-cert'],
                              options['ssl-key'],
                              bool(options['verbose']))

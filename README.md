@@ -7,7 +7,6 @@ A Gearman worker for sending Apple push notifications using a persistent connect
 To Do
 -----
 
- * Configurable queue name
  * Reconnecting protocol for Gearman
  * Reconnecting protocol for APNS
  * Restart APNS connection hourly

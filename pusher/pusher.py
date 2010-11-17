@@ -11,9 +11,11 @@ from vendor.twistedgears import client  # github.com/dustin/twisted-gears
 
 class PusherService(Service):
 
-    def __init__(self, apns_host, gearman_host, ssl_cert, ssl_key, verbose):
+    def __init__(self, apns_host, gearman_host, gearman_queue, ssl_cert,
+                 ssl_key, verbose):
         self.apns_host = apns_host
         self.gearman_host = gearman_host
+        self.gearman_queue = gearman_queue
         self.ssl_cert = ssl_cert
         self.ssl_key = ssl_key
         self.verbose = bool(verbose)
@@ -24,9 +26,7 @@ class PusherService(Service):
     @defer.inlineCallbacks
     def startService(self):
         Service.startService(self)
-        log.msg('Service starting. apns-host=%s, gearman-host=%s'
-                % (self.apns_host, self.gearman_host))
-        self.log_verbose('Verbose logging is enabled.')
+        log.msg('Service starting')
 
         yield self.apns_connect()
         yield self.gearman_connect()
@@ -51,23 +51,23 @@ class PusherService(Service):
     @defer.inlineCallbacks
     def gearman_connect(self):
         self.log_verbose('Connecting to Gearman...')
+        worker_id = self.get_worker_id()
 
         try:
             cc = protocol.ClientCreator(reactor, client.GearmanProtocol)
             host, port = self.gearman_host.split(':')
             self.gearman_proto = yield cc.connectTCP(host, int(port))
-            log.msg('Connected to Gearman at %s' % self.gearman_host)
+            log.msg('Connected to Gearman at %s. queue=%s, workerid=%s'
+                    % (self.gearman_host, self.gearman_queue, worker_id))
         except Exception, e:
             log.msg('ERROR: Unable to connect to Gearman at %s: %s'
                     % (self.gearman_host, e))
             defer.returnValue(False)
 
         # setup worker object
-        worker_id = self.get_worker_id()
-        self.log_verbose('Gearman worker ID: %s' % worker_id)
         w = client.GearmanWorker(self.gearman_proto)
         w.setId(worker_id)
-        w.registerFunction('pusher', self.process_job)
+        w.registerFunction(self.gearman_queue, self.process_job)
 
         # start 5 coiterators
         # TODO: Should we store these and call stop() in stopService?
