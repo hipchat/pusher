@@ -1,4 +1,6 @@
 import json
+from os import getpid
+from socket import gethostname
 from twisted.application.service import Service
 from twisted.internet import defer, protocol, reactor, task
 from twisted.python import log
@@ -61,8 +63,10 @@ class PusherService(Service):
             defer.returnValue(False)
 
         # setup worker object
+        worker_id = self.get_worker_id()
+        self.log_verbose('Gearman worker ID: %s' % worker_id)
         w = client.GearmanWorker(self.gearman_proto)
-        w.setId('pusher')
+        w.setId(worker_id)
         w.registerFunction('pusher', self.process_job)
 
         # start 5 coiterators
@@ -72,6 +76,9 @@ class PusherService(Service):
             reactor.callLater(0.1 * i, lambda: coop.coiterate(w.doJobs()))
 
         defer.returnValue(True)
+
+    def get_worker_id(self):
+        return 'pusher-%s-%s' % (gethostname(), getpid());
 
     def stopService(self):
         Service.stopService(self)
