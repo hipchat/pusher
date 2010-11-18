@@ -19,7 +19,7 @@ def refresh_plugin_cache():
 
 setup(name='pusher',
       version='1.0',
-      description='Gearman worker which sends push notifications.',
+      description='Service for sending push notifications.',
       author='Garret Heaton',
       author_email='garret@Hipchat.com',
       url='http://github.com/hipchat/pusher',

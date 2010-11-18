@@ -8,24 +8,25 @@ from zope.interface import implements
 
 class Options(usage.Options):
     optFlags = [
+        ["sandbox", None, "Use default sandbox APNS server."],
         ["verbose", "v", "Verbose logging"]]
 
     optParameters = [
         ["apns-host", None, "gateway.push.apple.com:2195", "APNS host."],
-        ["gearman-host", None, "localhost:4730", "Gearman server host."],
-        ["gearman-queue", None, "pusher", "Gearman queue name."],
-        ["ssl-cert", None, None, "Path to SSL cert in .pem format."],
-        ["ssl-key", None, None, "Path to SSL key in .pem format."]]
+        ["apns-cert", None, None, "Path to APNS SSL cert in .pem format."],
+        ["apns-key", None, None, "Path to APNS SSL key in .pem format."],
+        ["interface", None, "localhost:2196",
+            "Interface to accept requests on."]]
 
-    longdesc = 'Pusher is a Gearman worker service for sending push \
-        notifications. Please see http://github.com/hipchat/pusher to \
-        report issues or get help.'
+    longdesc = 'Pusher is a service for sending push notifications using \
+        a persistent connection. Please see http://github.com/hipchat/pusher \
+        to report issues or get help.'
 
 
 class PusherServiceMaker(object):
     implements(IServiceMaker, IPlugin)
     tapname = "pusher"
-    description = "A Gearman worker for sending push notifications."
+    description = "A service for sending push notifications."
     options = Options
 
     def makeService(self, options):
@@ -35,11 +36,15 @@ class PusherServiceMaker(object):
                 print options
                 sys.exit(1)
 
-        return PusherService(options['apns-host'],
-                             options['gearman-host'],
-                             options['gearman-queue'],
-                             options['ssl-cert'],
-                             options['ssl-key'],
+        if options['sandbox']:
+            apns_host = "gateway.sandbox.push.apple.com:2195"
+        else:
+            apns_host = options['apns-host']
+
+        return PusherService(options['interface'],
+                             apns_host,
+                             options['apns-cert'],
+                             options['apns-key'],
                              bool(options['verbose']))
 
 

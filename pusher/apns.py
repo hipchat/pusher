@@ -1,10 +1,8 @@
 # Based on code from http://goo.gl/AgUHR
 
 from OpenSSL import SSL
-from twisted.internet import reactor
-from twisted.internet.protocol import ClientFactory, Protocol
+from twisted.internet.protocol import Protocol
 from twisted.internet.ssl import ClientContextFactory
-from twisted.python import log
 import binascii
 import json
 import struct
@@ -35,13 +33,13 @@ class APNSProtocol(Protocol):
           <1 byte command><2 bytes length><token><2 bytes length><payload>
 
         """
-        if 'aps' not in payload:
-            raise Exception("Payload does not contain 'aps': %r" % payload)
-
         if len(device_token) != 64:
             raise Exception("Device token must be 64 bytes: %r" % device_token)
 
-        payload = json.dumps(payload, separators=(',',':'))
+        if not isinstance(payload, dict):
+            raise Exception("Payload must be a dictionary")
+
+        payload = json.dumps(payload, separators=(',', ':'))
         payload_len = len(payload)
         fmt = "!cH32sH%ds" % payload_len
         command = '\x00'

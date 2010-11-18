@@ -1,38 +1,30 @@
 import json
-from os import getpid
-from socket import gethostname
 from twisted.application.service import Service
-from twisted.internet import defer, protocol, reactor, task
+from twisted.internet import defer, protocol, reactor
 from twisted.python import log
+from twisted.web import resource, server
+from twisted.web.error import Error
 
 import apns
-from vendor.twistedgears import client  # github.com/dustin/twisted-gears
 
 
 class PusherService(Service):
 
-    def __init__(self, apns_host, gearman_host, gearman_queue, ssl_cert,
-                 ssl_key, verbose):
+    def __init__(self, interface, apns_host, apns_cert, apns_key, verbose):
+        self.interface = interface
         self.apns_host = apns_host
-        self.gearman_host = gearman_host
-        self.gearman_queue = gearman_queue
-        self.ssl_cert = ssl_cert
-        self.ssl_key = ssl_key
+        self.apns_cert = apns_cert
+        self.apns_key = apns_key
         self.verbose = bool(verbose)
-        self.worker_id = self.get_worker_id()
 
         self.apns_proto = None
-        self.gearman_proto = None
 
     @defer.inlineCallbacks
     def startService(self):
         Service.startService(self)
         log.msg('Service starting')
-
+        self.init_api()
         yield self.apns_connect()
-        yield self.gearman_connect()
-
-        self.process_jobs()
 
     @defer.inlineCallbacks
     def apns_connect(self):
@@ -40,7 +32,7 @@ class PusherService(Service):
 
         try:
             cc = protocol.ClientCreator(reactor, apns.APNSProtocol)
-            ctx = apns.APNSClientContextFactory(self.ssl_cert, self.ssl_key)
+            ctx = apns.APNSClientContextFactory(self.apns_cert, self.apns_key)
             host, port = self.apns_host.split(':')
             self.apns_proto = yield cc.connectSSL(host, int(port), ctx)
             log.msg('Connected to APNS at %s' % self.apns_host)
@@ -51,69 +43,65 @@ class PusherService(Service):
 
         defer.returnValue(True)
 
-    @defer.inlineCallbacks
-    def gearman_connect(self):
-        self.log_verbose('Connecting to Gearman...')
-
-        try:
-            cc = protocol.ClientCreator(reactor, client.GearmanProtocol)
-            host, port = self.gearman_host.split(':')
-            self.gearman_proto = yield cc.connectTCP(host, int(port))
-            log.msg('Connected to Gearman at %s. queue=%s, workerid=%s'
-                    % (self.gearman_host, self.gearman_queue, self.worker_id))
-        except Exception, e:
-            log.msg('ERROR: Unable to connect to Gearman at %s: %s'
-                    % (self.gearman_host, e))
-            defer.returnValue(False)
-
-        defer.returnValue(True)
-
-    def get_worker_id(self):
-        return 'pusher-%s-%s' % (gethostname(), getpid())
+    def init_api(self):
+        log.msg('Starting HTTP on %s...' % self.interface)
+        root = resource.Resource()
+        root.putChild("send", APISendResource(self))
+        site = server.Site(root, logPath='/dev/null')
+        host, port = self.interface.split(':')
+        reactor.listenTCP(int(port), site, interface=host)
 
     def log_verbose(self, message):
         if self.verbose:
             log.msg("VERBOSE: %s" % message)
 
-    def process_jobs(self):
-        # setup worker object
-        w = client.GearmanWorker(self.gearman_proto)
-        w.setId(self.worker_id)
-        w.registerFunction(self.gearman_queue, self.process_job)
-
-        # start 5 coiterators
-        # TODO: Should we store these and call stop() in stopService?
-        coop = task.Cooperator()
-        for i in range(5):
-            reactor.callLater(0.1 * i, lambda: coop.coiterate(w.doJobs()))
-
-    def process_job(self, job_data, job_handle):
-        try:
-            log.msg('Processing job: %s' % job_handle)
-            try:
-                data = json.loads(job_data)
-            except Exception, e:
-                log.err(e)
-                return defer.succeed("ERROR: Job data not valid JSON: %s, %r"
-                                     % (e, job_data))
-
-            if 'device_token' not in data:
-                raise Exception("'device_token' not found: %r" % data)
-            if 'payload' not in data:
-                raise Exception("'payload' not found: %r" % data)
-
-            device_token = str(data['device_token'])
-            payload = data['payload']
-
-            self.log_verbose('device_token = %r' % device_token)
-            self.log_verbose('payload = %r' % payload)
-            self.apns_proto.sendMessage(device_token, payload)
-
-            return defer.succeed("OK")
-        except Exception, e:
-            log.err(e)
-            return defer.succeed("ERROR: %s" % e)
+    def send_push(self, device_token, payload):
+        log.msg('Sending push to %s' % device_token)
+        self.log_verbose('Payload = %r' % payload)
+        self.apns_proto.sendMessage(device_token, payload)
 
     def stopService(self):
         Service.stopService(self)
         log.msg('Service stopping')
+
+
+class APISendResource(resource.Resource):
+
+    def __init__(self, service):
+        self.service = service
+
+    def render_POST(self, request):
+        self.service.log_verbose('Received request: %r, %r'
+                                 % (request, request.args))
+        try:
+            if 'deviceToken' not in request.args:
+                raise Error(400, "Missing deviceToken argument")
+            if 'payload' not in request.args:
+                raise Error(400, "Missing payload argument")
+
+            device_token = request.args['deviceToken'][0]
+            payload = request.args['payload'][0]
+
+            try:
+                data = json.loads(payload)
+            except Exception, e:
+                raise Error(400, "Payload must be JSON: %s" % e)
+
+            if 'aps' not in payload:
+                raise Error(400, "Payload missing 'aps': %r" % payload)
+
+            if len(device_token) != 64:
+                raise Error(400, "Device token must be 64 bytes: %r"
+                                 % device_token)
+
+            self.service.send_push(device_token, data)
+        except Error, e:
+            log.msg('Bad request: %s' % e)
+            request.setResponseCode(e.status)
+            return str(e)
+        except Exception, e:
+            log.msg('Internal error: %s' % e)
+            request.setResponseCode(500)
+            return "Internal error: %s" % e
+
+        return "OK"
