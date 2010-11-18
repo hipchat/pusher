@@ -19,6 +19,7 @@ class PusherService(Service):
         self.ssl_cert = ssl_cert
         self.ssl_key = ssl_key
         self.verbose = bool(verbose)
+        self.worker_id = self.get_worker_id()
 
         self.apns_proto = None
         self.gearman_proto = None
@@ -30,6 +31,8 @@ class PusherService(Service):
 
         yield self.apns_connect()
         yield self.gearman_connect()
+
+        self.process_jobs()
 
     @defer.inlineCallbacks
     def apns_connect(self):
@@ -51,22 +54,31 @@ class PusherService(Service):
     @defer.inlineCallbacks
     def gearman_connect(self):
         self.log_verbose('Connecting to Gearman...')
-        worker_id = self.get_worker_id()
 
         try:
             cc = protocol.ClientCreator(reactor, client.GearmanProtocol)
             host, port = self.gearman_host.split(':')
             self.gearman_proto = yield cc.connectTCP(host, int(port))
             log.msg('Connected to Gearman at %s. queue=%s, workerid=%s'
-                    % (self.gearman_host, self.gearman_queue, worker_id))
+                    % (self.gearman_host, self.gearman_queue, self.worker_id))
         except Exception, e:
             log.msg('ERROR: Unable to connect to Gearman at %s: %s'
                     % (self.gearman_host, e))
             defer.returnValue(False)
 
+        defer.returnValue(True)
+
+    def get_worker_id(self):
+        return 'pusher-%s-%s' % (gethostname(), getpid())
+
+    def log_verbose(self, message):
+        if self.verbose:
+            log.msg("VERBOSE: %s" % message)
+
+    def process_jobs(self):
         # setup worker object
         w = client.GearmanWorker(self.gearman_proto)
-        w.setId(worker_id)
+        w.setId(self.worker_id)
         w.registerFunction(self.gearman_queue, self.process_job)
 
         # start 5 coiterators
@@ -75,19 +87,6 @@ class PusherService(Service):
         for i in range(5):
             reactor.callLater(0.1 * i, lambda: coop.coiterate(w.doJobs()))
 
-        defer.returnValue(True)
-
-    def get_worker_id(self):
-        return 'pusher-%s-%s' % (gethostname(), getpid());
-
-    def stopService(self):
-        Service.stopService(self)
-        log.msg('Service stopping')
-
-    def log_verbose(self, message):
-        if self.verbose:
-            log.msg("VERBOSE: %s" % message)
-
     def process_job(self, job_data, job_handle):
         try:
             log.msg('Processing job: %s' % job_handle)
@@ -95,7 +94,7 @@ class PusherService(Service):
                 data = json.loads(job_data)
             except Exception, e:
                 log.err(e)
-                return defer.succeed("ERROR: Job data is not valid JSON: %s, %r"
+                return defer.succeed("ERROR: Job data not valid JSON: %s, %r"
                                      % (e, job_data))
 
             if 'device_token' not in data:
@@ -114,3 +113,7 @@ class PusherService(Service):
         except Exception, e:
             log.err(e)
             return defer.succeed("ERROR: %s" % e)
+
+    def stopService(self):
+        Service.stopService(self)
+        log.msg('Service stopping')
