@@ -32,10 +32,9 @@ Note: You can also pass `--apns-host` to set the APNS host explicitly.
 Sending pushes
 --------------
 
-HTTP POST to `http://localhost:2196/send` with the fields `deviceToken` (64 byte string) and `payload` (JSON) containing the same data you would normally send to the APNS server directly. You can change the host and port for the REST API using the`--interface` command line option.
+HTTP POST to `http://localhost:2196/send` with the fields `deviceToken` (64 byte string) and `payload` (JSON) containing the same data you would normally send to the APNS server directly. You can change the host and port with the `--interface` command line option.
 
-    $ curl http://localhost:2196/send \
-        -d "deviceToken=<your token>&payload={\"aps\":{\"alert\":\"Testing Pusher\"}}" 
+    $ curl http://localhost:2196/send -d "deviceToken=<your token>&payload={\"aps\":{\"alert\":\"Testing Pusher\"}}"
 
 The HTTP request will return immediately since Pusher does not wait for the push to be delivered to the APNS server. It will return an error if your deviceToken or payload appear to be malformed, however.
 
