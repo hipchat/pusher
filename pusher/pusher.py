@@ -1,26 +1,36 @@
 import json
 from twisted.application.service import Service
-from twisted.internet import reactor
+from twisted.internet import defer, reactor
+from twisted.internet.task import LoopingCall
 from twisted.python import log
 from twisted.web import resource, server
 from twisted.web.error import Error
 
-from apns import APNSConnection
+import apns
 
 
 class PusherService(Service):
 
-    def __init__(self, interface, apns_host, apns_cert, apns_key, verbose):
+    def __init__(self, interface, sandbox, apns_cert, apns_key,
+                 feedback_url, feedback_frequency, verbose):
+        self.apns_cert = apns_cert
+        self.apns_key = apns_key
+        self.feedback_frequency = int(feedback_frequency)
+        self.feedback_url = feedback_url
         self.interface = interface
+        self.sandbox = bool(sandbox)
         self.verbose = bool(verbose)
 
         # APNS connection wrapper
-        host, port = apns_host.split(':')
-        self.apns = APNSConnection(host, int(port), apns_cert, apns_key)
+        self.apns = apns.PushConnection(sandbox, apns_cert, apns_key)
 
-    def startService(self):
-        Service.startService(self)
-        self.init_api()
+    @defer.inlineCallbacks
+    def feedback_check(self):
+        log.msg('Checking feedback service...')
+
+        data = yield apns.FeedbackConnection(self.sandbox, self.apns_cert,
+                                             self.apns_key).get()
+        log.msg('Feedback: %r' % data)
 
     def init_api(self):
         log.msg('Starting HTTP on %s...' % self.interface)
@@ -30,6 +40,15 @@ class PusherService(Service):
         host, port = self.interface.split(':')
         reactor.listenTCP(int(port), site, interface=host)
 
+    def init_feedback_check(self):
+        if not self.feedback_url:
+            self.log_verbose('Not enabling feedback check')
+            return
+        log.msg('Enabling feedback check: url=%s, frequency=%d'
+                % (self.feedback_url, self.feedback_frequency))
+        lc = LoopingCall(self.feedback_check)
+        lc.start(self.feedback_frequency, now=True)
+
     def log_verbose(self, message):
         if self.verbose:
             log.msg("VERBOSE: %s" % message)
@@ -38,6 +57,11 @@ class PusherService(Service):
         log.msg('Sending push to %s' % device_token)
         self.log_verbose('Payload = %r' % payload)
         self.apns.send_push(device_token, payload)
+
+    def startService(self):
+        Service.startService(self)
+        self.init_api()
+        self.init_feedback_check()
 
     def stopService(self):
         Service.stopService(self)

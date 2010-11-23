@@ -1,15 +1,29 @@
 # Based on code from http://goo.gl/AgUHR
 
 from OpenSSL import SSL
-from twisted.internet import defer, protocol, reactor, task
-from twisted.internet.ssl import ClientContextFactory
+from twisted.internet import defer, protocol, reactor, ssl, task
 from twisted.python import log
 import binascii
 import json
 import struct
 
+from StringIO import StringIO as _StringIO
 
-class APNSClientContextFactory(ClientContextFactory):
+class StringIO(_StringIO):
+  """Add context management protocol to StringIO
+      ie: http://bugs.python.org/issue1286
+  """
+  
+  def __enter__(self):
+    if self.closed:
+      raise ValueError('I/O operation on closed file')
+    return self
+  
+  def __exit__(self, exc, value, tb):
+    self.close()
+
+
+class ClientContextFactory(ssl.ClientContextFactory):
 
     def __init__(self, cert_file, key_file):
         self.ctx = SSL.Context(SSL.SSLv3_METHOD)
@@ -20,7 +34,7 @@ class APNSClientContextFactory(ClientContextFactory):
         return self.ctx
 
 
-class APNSProtocol(protocol.Protocol):
+class PushProtocol(protocol.Protocol):
 
     _disconnected = False
 
@@ -59,22 +73,27 @@ class APNSProtocol(protocol.Protocol):
         self.transport.loseConnection()
 
 
-class APNSConnection():
+class PushConnection():
     """Managed APNS connection that supports reconnection."""
+
+    HOST = "gateway.push.apple.com"
+    HOST_SANDBOX = "gateway.sandbox.push.apple.com"
+    PORT = 2195
 
     # Max time to use an APNS connection
     CONNECTION_TIMEOUT = 59
 
-    def __init__(self, host, port, cert_file, key_file):
-        self.host = host
-        self.port = port
+    def __init__(self, sandbox, cert_file, key_file):
         self.cert_file = cert_file
         self.key_file = key_file
         self.connection = None
         self.pending_deferreds = []
         self.pending_connection = False
 
-        # Dissonnect every 59 minutes (Apple suggests every hour). The next
+        self.host = self.HOST_SANDBOX if sandbox else self.HOST
+        self.port = self.PORT
+
+        # Disonnect every so often (Apple suggests every hour). The next
         # push will trigger a new connection to be made.
         lc = task.LoopingCall(self.disconnect)
         lc.start(self.CONNECTION_TIMEOUT * 60, now=False)
@@ -134,8 +153,69 @@ class APNSConnection():
             return None
 
         self.pending_connection = True
-        ctx = APNSClientContextFactory(self.cert_file, self.key_file)
-        cc = protocol.ClientCreator(reactor, APNSProtocol)
+        ctx = ClientContextFactory(self.cert_file, self.key_file)
+        cc = protocol.ClientCreator(reactor, PushProtocol)
         d = cc.connectSSL(self.host, self.port, ctx)
         d.addCallback(cb).addErrback(eb)
         return d
+
+
+class FeedbackProtocol(protocol.Protocol):
+
+    def __init__(self):
+        self.buffer = ''
+        self.d = defer.Deferred()
+
+    def dataReceived(self, data):
+        log.msg('dataReceived raw: %r' % data)
+        log.msg('dataReceived hex: %r' % binascii.hexlify(data))
+        self.buffer = self.buffer + data
+
+    def connectionLost(self, reason):
+        log.msg('FeedbackConnection.connectionLost: %s' % reason)
+        self.d.callback(self.buffer)
+
+    def get(self):
+        return self.d
+
+
+class FeedbackConnection():
+
+    HOST = 'feedback.push.apple.com'
+    HOST_SANDBOX = 'feedback.sandbox.push.apple.com'
+    PORT = 2196
+
+    def __init__(self, sandbox, cert_file, key_file):
+        self.cert_file = cert_file
+        self.key_file = key_file
+        self.sandbox = sandbox
+
+        self.host = self.HOST_SANDBOX if sandbox else self.HOST
+        self.port = self.PORT
+
+    @defer.inlineCallbacks
+    def get(self):
+        """Get all available feedback"""
+        ctx = ClientContextFactory(self.cert_file, self.key_file)
+        log.msg('host=%r, port=%r' % (self.host, self.port))
+        cc = protocol.ClientCreator(reactor, FeedbackProtocol)
+        conn = yield cc.connectSSL(self.host, self.port, ctx)
+        data = yield conn.get()
+        log.msg('Feedback data: %r' % data)
+        log.msg('Feedback data hex: %r' % binascii.hexlify(data))
+        decoded = self.decode_feedback(data)
+        log.msg("Decoded: %r" % decoded)
+        defer.returnValue(decoded)
+
+    def decode_feedback(self, binary_tuples):
+      """Returns a list of tuples in (datetime, token_str) format
+
+      Taken from https://github.com/samuraisam/pyapns
+
+      """
+      fmt = '!lh32s'
+      size = struct.calcsize(fmt)
+      with StringIO(binary_tuples) as f:
+        return [(datetime.datetime.fromtimestamp(ts), binascii.hexlify(tok))
+                for ts, toklen, tok in (struct.unpack(fmt, tup) 
+                                  for tup in iter(lambda: f.read(size), ''))]

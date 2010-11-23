@@ -12,11 +12,14 @@ class Options(usage.Options):
         ["verbose", "v", "Verbose logging"]]
 
     optParameters = [
-        ["apns-host", None, "gateway.push.apple.com:2195", "APNS host."],
         ["apns-cert", None, None, "Path to APNS SSL cert in .pem format."],
         ["apns-key", None, None, "Path to APNS SSL key in .pem format."],
         ["interface", None, "localhost:2196",
-            "Interface to accept requests on."]]
+            "Interface to accept requests on."],
+        ["feedback-url", None, None,
+            "URL to hit with feedback service data. See README for format."],
+        ["feedback-frequency", None, 60,
+            "Minutes between feedback service checks."]]
 
     longdesc = 'Pusher is a service for sending push notifications using \
         a persistent connection. Please see http://github.com/hipchat/pusher \
@@ -30,21 +33,19 @@ class PusherServiceMaker(object):
     options = Options
 
     def makeService(self, options):
-        for opt, val in dict(options).items():
-            if val is None:
+        required = ['apns-cert', 'apns-key', 'interface']
+        for opt in required:
+            if options[opt] is None:
                 print "ERROR: Please provide --%s.\n" % opt
                 print options
                 sys.exit(1)
 
-        if options['sandbox']:
-            apns_host = "gateway.sandbox.push.apple.com:2195"
-        else:
-            apns_host = options['apns-host']
-
         return PusherService(options['interface'],
-                             apns_host,
+                             bool(options['sandbox']),
                              options['apns-cert'],
                              options['apns-key'],
+                             options['feedback-url'],
+                             options['feedback-frequency'],
                              bool(options['verbose']))
 
 
