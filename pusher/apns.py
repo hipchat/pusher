@@ -12,7 +12,7 @@ import struct
 class APNSClientContextFactory(ClientContextFactory):
 
     def __init__(self, cert_file, key_file):
-        self.ctx = SSL.Context(SSL.SSLv3_METHOD)
+        self.ctx = SSL.Context(SSL.TLSv1_METHOD)
         self.ctx.use_certificate_file(cert_file)
         self.ctx.use_privatekey_file(key_file)
 
