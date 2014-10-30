@@ -2,6 +2,7 @@ Pusher
 =======
 
 A service for sending Apple push notifications using a persistent connection.
+
 Why? Because [Apple says](http://goo.gl/3UgbY):
 
  > You should also retain connections with APNs across multiple notifications. APNs may consider connections that are rapidly and repeatedly established and torn down as a denial-of-service attack.
